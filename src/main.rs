@@ -4,23 +4,44 @@ use std::{
     io::{self, BufRead, Write},
 };
 
-use conduit::{Config, Database, PduEvent};
-use ruma::{EventId, RoomAliasId, RoomId, RoomIdOrAliasId, UserId};
+use conduit::{Config, Database};
+use ruma::{RoomAliasId, RoomId, RoomIdOrAliasId};
 
 type EasyErr = Result<(), Box<dyn std::error::Error>>;
 
+const HELP_MSG: &str = "Usage:
+    luge </path/to/db> [file=</path/to/file>]
+
+If a file is specified it will be appended to or created if not found
+
+Queries:
+    - pdus <room alias or room id> [string to filter events]
+    - rooms
+";
+
 fn main() -> EasyErr {
     let mut args = env::args().collect::<Vec<_>>();
+
+    if args.iter().any(|s| s.contains("help")) {
+        println!("{}", HELP_MSG);
+        return Ok(());
+    }
 
     for arg in args.iter_mut() {
         *arg = arg.trim().to_string();
     }
 
-    let mut writer: Box<dyn Write> = if args.iter().any(|s| s.starts_with("-file=")) {
-        let pos = args.iter().position(|it| it.starts_with("-file=")).unwrap();
+    let mut writer: Box<dyn Write> = if args.iter().any(|s| s.starts_with("file=")) {
+        let pos = args.iter().position(|it| it.starts_with("file=")).unwrap();
         let arg = args.remove(pos);
-        let path = arg.strip_prefix("-file=").unwrap();
-        Box::new(fs::OpenOptions::new().write(true).append(true).open(path)?)
+        let path = arg.strip_prefix("file=").unwrap();
+        Box::new(
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .append(true)
+                .open(path)?,
+        )
     } else {
         Box::new(io::stdout())
     };
@@ -61,7 +82,11 @@ fn main() -> EasyErr {
                         Some(filter),
                     )?,
                     ["rooms"] => dump_rooms(&mut writer, &db)?,
-                    ["exit"] | ["e"] | [""] => return Ok(()),
+                    ["help"] | [""] => {
+                        println!("{}", HELP_MSG);
+                        io::stdout().flush()?;
+                    }
+                    ["exit"] | ["e"] => return Ok(()),
                     _ => panic!("not a recognized option"),
                 }
             }
