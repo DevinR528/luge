@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 serde_json = "1.0.59"
+itertools = "0.9"
 
 [dependencies.conduit]
 git = "https://gitlab.com/DevinR528/conduit"

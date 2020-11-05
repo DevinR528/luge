@@ -927,6 +927,7 @@ name = "luge"
 version = "0.1.0"
 dependencies = [
  "conduit",
+ "itertools",
  "ruma",
  "serde_json",
 ]

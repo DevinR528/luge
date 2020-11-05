@@ -1,6 +1,7 @@
 use std::{
     convert::{TryFrom, TryInto},
-    io::{self, BufRead},
+    env, fs,
+    io::{self, BufRead, Write},
 };
 
 use conduit::{Config, Database, PduEvent};
@@ -9,26 +10,57 @@ use ruma::{EventId, RoomAliasId, RoomId, RoomIdOrAliasId, UserId};
 type EasyErr = Result<(), Box<dyn std::error::Error>>;
 
 fn main() -> EasyErr {
-    let args = std::env::args().collect::<Vec<_>>();
+    let mut args = env::args().collect::<Vec<_>>();
+
+    for arg in args.iter_mut() {
+        *arg = arg.trim().to_string();
+    }
+
+    let mut writer: Box<dyn Write> = if args.iter().any(|s| s.starts_with("-file=")) {
+        let pos = args.iter().position(|it| it.starts_with("-file=")).unwrap();
+        let arg = args.remove(pos);
+        let path = arg.strip_prefix("-file=").unwrap();
+        Box::new(fs::OpenOptions::new().write(true).append(true).open(path)?)
+    } else {
+        Box::new(io::stdout())
+    };
+
+    args.retain(|s| !s.is_empty());
+
     match args.as_slice() {
         [_, path] => {
             let mut config = Config::development();
-            config
-                .extras
-                .insert("database_path".to_owned(), path.to_string().into());
+            config.extras.insert(
+                "database_path".to_owned(),
+                path.trim_end().to_string().into(),
+            );
 
             let db = Database::load_or_create(&config).unwrap();
             loop {
-                println!("What you looking for: ");
+                print!("What you looking for: ");
+                io::stdout().flush()?;
+
+                // This works since every time we loop we need a flush
+                writer.flush()?;
+
                 let stdin = std::io::stdin();
                 let line = {
                     let mut line = String::new();
                     stdin.lock().read_line(&mut line).unwrap();
                     line
                 };
+
                 match line.trim_end().split(' ').collect::<Vec<_>>().as_slice() {
-                    ["pdus", room] => dump_pdus(&db, RoomIdOrAliasId::try_from(*room)?)?,
-                    ["rooms"] => dump_rooms(&db)?,
+                    ["pdus", room] => {
+                        dump_pdus(&mut writer, &db, RoomIdOrAliasId::try_from(*room)?, None)?
+                    }
+                    ["pdus", room, filter] => dump_pdus(
+                        &mut writer,
+                        &db,
+                        RoomIdOrAliasId::try_from(*room)?,
+                        Some(filter),
+                    )?,
+                    ["rooms"] => dump_rooms(&mut writer, &db)?,
                     ["exit"] | ["e"] | [""] => return Ok(()),
                     _ => panic!("not a recognized option"),
                 }
@@ -38,33 +70,61 @@ fn main() -> EasyErr {
     }
 }
 
-fn dump_pdus(db: &Database, room: RoomIdOrAliasId) -> EasyErr {
-    let res: Result<RoomId, RoomAliasId> = room.try_into();
-    match res {
-        Ok(rid) => {
-            for pdu in db.rooms.room_state_full(&rid)?.values() {
-                let pretty = serde_json::to_string_pretty(pdu)?;
-                println!("{}", pretty);
+fn print_rooms(
+    write: &mut dyn Write,
+    db: &Database,
+    room: &RoomId,
+    filter: Option<&str>,
+) -> EasyErr {
+    use itertools::Itertools;
+
+    for pdu in db
+        .rooms
+        .room_state_full(room)?
+        .values()
+        .sorted_by_key(|pdu| pdu.origin_server_ts)
+    {
+        if let Some(filter) = filter {
+            let pretty = serde_json::to_string_pretty(pdu)?;
+            if pretty.contains(filter) {
+                writeln!(write, "{}", pretty)?;
             }
-        }
-        Err(id) => {
-            let rid = db
-                .rooms
-                .id_from_alias(&id)?
-                .expect("No room with that alias, use the form #room:server");
-            for pdu in db.rooms.room_state_full(&rid)?.values() {
-                let pretty = serde_json::to_string_pretty(pdu)?;
-                println!("{}", pretty);
-            }
+        } else {
+            let pretty = serde_json::to_string_pretty(pdu)?;
+            writeln!(write, "{}", pretty)?;
         }
     }
     Ok(())
 }
 
-fn dump_rooms(db: &Database) -> EasyErr {
-    println!("Rooms for server: {}", db.globals.server_name().as_str());
+fn dump_pdus(
+    write: &mut dyn Write,
+    db: &Database,
+    room: RoomIdOrAliasId,
+    filter: Option<&str>,
+) -> EasyErr {
+    let res: Result<RoomId, RoomAliasId> = room.try_into();
+    match res {
+        Ok(rid) => print_rooms(write, db, &rid, filter)?,
+        Err(id) => {
+            let rid = db
+                .rooms
+                .id_from_alias(&id)?
+                .expect("No room with that alias, use the form #room:server");
+            print_rooms(write, db, &rid, filter)?;
+        }
+    }
+    Ok(())
+}
+
+fn dump_rooms(write: &mut dyn Write, db: &Database) -> EasyErr {
+    writeln!(
+        write,
+        "Rooms for server: {}",
+        db.globals.server_name().as_str()
+    )?;
     for id in db.rooms.public_rooms() {
-        println!("{}", id?.as_str())
+        writeln!(write, "{}", id?.as_str())?;
     }
     Ok(())
 }
