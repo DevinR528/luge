@@ -5,7 +5,7 @@ use std::{
 };
 
 use conduit::{Config, Database};
-use ruma::{RoomAliasId, RoomId, RoomIdOrAliasId};
+use ruma::{user_id, RoomAliasId, RoomId, RoomIdOrAliasId};
 
 type EasyErr = Result<(), Box<dyn std::error::Error>>;
 
@@ -15,6 +15,7 @@ const HELP_MSG: &str = "Usage:
 If a file is specified it will be appended to or created if not found
 
 Queries:
+    - all <room alias or room id> [string to filter events]
     - pdus <room alias or room id> [string to filter events]
     - rooms
 ";
@@ -72,10 +73,19 @@ fn main() -> EasyErr {
                 };
 
                 match line.trim_end().split(' ').collect::<Vec<_>>().as_slice() {
-                    ["pdus", room] => {
-                        dump_pdus(&mut writer, &db, RoomIdOrAliasId::try_from(*room)?, None)?
+                    ["all", room] => {
+                        dump_all_events(&mut writer, &db, RoomIdOrAliasId::try_from(*room)?, None)?
                     }
-                    ["pdus", room, filter] => dump_pdus(
+                    ["all", room, filter] => dump_all_events(
+                        &mut writer,
+                        &db,
+                        RoomIdOrAliasId::try_from(*room)?,
+                        Some(filter),
+                    )?,
+                    ["pdus", room] => {
+                        dump_state_pdus(&mut writer, &db, RoomIdOrAliasId::try_from(*room)?, None)?
+                    }
+                    ["pdus", room, filter] => dump_state_pdus(
                         &mut writer,
                         &db,
                         RoomIdOrAliasId::try_from(*room)?,
@@ -95,7 +105,7 @@ fn main() -> EasyErr {
     }
 }
 
-fn print_rooms(
+fn print_state_pdus(
     write: &mut dyn Write,
     db: &Database,
     room: &RoomId,
@@ -122,7 +132,7 @@ fn print_rooms(
     Ok(())
 }
 
-fn dump_pdus(
+fn dump_state_pdus(
     write: &mut dyn Write,
     db: &Database,
     room: RoomIdOrAliasId,
@@ -130,13 +140,60 @@ fn dump_pdus(
 ) -> EasyErr {
     let res: Result<RoomId, RoomAliasId> = room.try_into();
     match res {
-        Ok(rid) => print_rooms(write, db, &rid, filter)?,
+        Ok(rid) => print_state_pdus(write, db, &rid, filter)?,
         Err(id) => {
             let rid = db
                 .rooms
                 .id_from_alias(&id)?
                 .expect("No room with that alias, use the form #room:server");
-            print_rooms(write, db, &rid, filter)?;
+            print_state_pdus(write, db, &rid, filter)?;
+        }
+    }
+    Ok(())
+}
+
+fn print_all_pdus(
+    write: &mut dyn Write,
+    db: &Database,
+    room: &RoomId,
+    filter: Option<&str>,
+) -> EasyErr {
+    use itertools::Itertools;
+
+    for pdu in db
+        .rooms
+        .pdus_after(&user_id!("@fakeuser:fake.com"), room, 0)
+        .flat_map(|pair| Some(pair.ok()?.1))
+        .sorted_by_key(|pdu| pdu.origin_server_ts)
+    {
+        if let Some(filter) = filter {
+            let pretty = serde_json::to_string_pretty(&pdu)?;
+            if pretty.contains(filter) {
+                writeln!(write, "{}", pretty)?;
+            }
+        } else {
+            let pretty = serde_json::to_string_pretty(&pdu)?;
+            writeln!(write, "{}", pretty)?;
+        }
+    }
+    Ok(())
+}
+
+fn dump_all_events(
+    write: &mut dyn Write,
+    db: &Database,
+    room: RoomIdOrAliasId,
+    filter: Option<&str>,
+) -> EasyErr {
+    let res: Result<RoomId, RoomAliasId> = room.try_into();
+    match res {
+        Ok(rid) => print_all_pdus(write, db, &rid, filter)?,
+        Err(id) => {
+            let rid = db
+                .rooms
+                .id_from_alias(&id)?
+                .expect("No room with that alias, use the form #room:server");
+            print_all_pdus(write, db, &rid, filter)?;
         }
     }
     Ok(())
