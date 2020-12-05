@@ -7,13 +7,14 @@ edition = "2018"
 [dependencies]
 serde_json = "1.0.59"
 itertools = "0.9"
+tokio = "0.2.22"
 
 [dependencies.conduit]
 git = "https://gitlab.com/DevinR528/conduit"
-branch = "dev/sendtxn"
+branch = "sendtxn"
 default-features = false
 
 [dependencies.ruma] 
 git = "https://github.com/ruma/ruma"
 features = ["rand", "client-api", "federation-api", "unstable-pre-spec", "unstable-synapse-quirks", "unstable-exhaustive-types"]
-rev = "c15382ca41262058302959eac4029ab4a1ea5889"
+rev = "e8882fe8142d7b55ed4c8ccc6150946945f9e237"

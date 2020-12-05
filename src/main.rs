@@ -20,7 +20,8 @@ Queries:
     - rooms
 ";
 
-fn main() -> EasyErr {
+#[tokio::main]
+async fn main() -> EasyErr {
     let mut args = env::args().collect::<Vec<_>>();
 
     if args.iter().any(|s| s.contains("help")) {
@@ -92,6 +93,7 @@ fn main() -> EasyErr {
                         Some(filter),
                     )?,
                     ["rooms"] => dump_rooms(&mut writer, &db)?,
+                    ["size"] => dump_size(&mut writer, &db)?,
                     ["help"] | [""] => {
                         println!("{}", HELP_MSG);
                         io::stdout().flush()?;
@@ -207,6 +209,47 @@ fn dump_rooms(write: &mut dyn Write, db: &Database) -> EasyErr {
     )?;
     for id in db.rooms.public_rooms() {
         writeln!(write, "{}", id?.as_str())?;
+    }
+    Ok(())
+}
+
+fn dump_size(write: &mut dyn Write, db: &Database) -> EasyErr {
+    writeln!(
+        write,
+        "Size for server: {}",
+        db.globals.server_name().as_str()
+    )?;
+    writeln!(
+        write,
+        "SIZE{}ELEMENTS{}BYTES",
+        " ".repeat(30 - 4),
+        " ".repeat(30 - 8),
+    )?;
+    for id in db._db.tree_names() {
+        let tree = db._db.open_tree(&id)?;
+
+        let name = String::from_utf8_lossy(&id);
+        let name_pad = 30_usize.saturating_sub(name.len());
+        let num_el = tree.len();
+        let el_pad = 30_usize.saturating_sub(num_el.to_string().len());
+
+        let bytes = tree
+            .iter()
+            .flat_map(|pair| pair.ok())
+            .fold(0, |mut acc, (key, val)| {
+                acc += key.len() + val.len();
+                acc
+            });
+
+        writeln!(
+            write,
+            "{}{}{}{}{}",
+            name,
+            " ".repeat(name_pad),
+            num_el,
+            " ".repeat(el_pad),
+            bytes
+        )?;
     }
     Ok(())
 }
